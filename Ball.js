@@ -4,7 +4,7 @@
  * @create 2016-08-12
  */
 
-class Ball extends Base {
+class Ball extends Engine.Base {
     constructor(x, y, radius) {
         super(x, y);
         this.radius = radius;

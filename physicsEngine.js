@@ -4,34 +4,40 @@
  * @create 2016-08-12
  */
 
+ /**
+  * 基类(虚基类)
+  * @author Simon
+  * @create 2016-08-09
+  */
+
+
 class Engine {
     /**
      * 构造函数
      * @method constructor
-     * @param  {Element}    canvas        主图层
-     * @param  {Element}    canvasHelper  辅助线专用图层
-     * @param  {[Int]}      samsaraCount 每帧的轮回数
+     * @param  {Element}       canvas       图层canvas元素
+     * @param  {[Int]}         samsaraCount 每帧的轮回数, 默认为1
+     * @param  {[Bool|String]} autoFreqMode 动态调频模式 false|'turbo'|'balance', default:'balance'
+     * @param  {[Bool]}        wheel        是够监听鼠标滚轮和方向键, 进行缩放和移动
      */
-    constructor(canvas, canvasHelper, samsaraCount = 1, dynamicFreq = true) {
+    constructor(canvas, samsaraCount=1, autoFreqMode='balance', wheel=true) {
         // 主图层
         this.canvas = canvas;
         this.ct = canvas.getContext('2d');
-        // 辅助线专用图层
-        // ** 辅助线绘制单独开一个图层性能不好, 已取消
-        // this.canvasHelper = canvasHelper;
-        // this.ctHelper = canvasHelper.getContext('2d');
-        this.ctHelper = this.ct;
+        // 辅助线专用图层 ** 辅助线绘制单独开一个图层性能不好, 已取消
         this.ctHelperAvailable = true; // 用于降低辅助线图层的刷新率, 以免拖慢整体刷新率
-        this.ctHelperFrame = 0;
+
         // 每帧的轮回数
         this.samsaraCount = samsaraCount;
         this.maxSamsaraCount = samsaraCount;
-        // 自动调频
-        this.dynamicFreq = dynamicFreq;
+
+        // 自动调频/性能监控
+        this.autoFreqMode = autoFreqMode;
         this._bufferFrameCycle = [];
         this._bufferFunCycle = [];
         this._autoFreqTimmer = 0;
         this._frameTimestamp = 0;
+
         // 初始化
         this.entities = [];
         this.entitySet = {};
@@ -42,37 +48,40 @@ class Engine {
         this.origin = {x: 0, y: 0};
         this.scale = 1;
 
-        document.addEventListener('wheel', event => {
-            console.log(event.deltaY);
-            if (event.deltaY < 0) {
-                this.scale *= 1.1;
-                // this.origin.x -= this.mouse.x / this.scale;
-                // this.origin.y -= this.mouse.y / this.scale;
-            }
-            if (event.deltaY > 0) {
-                this.scale *= 0.9;
-                // this.origin.x += this.mouse.x / this.scale;
-                // this.origin.y += this.mouse.y / this.scale;
-            }
-        })
-        document.addEventListener('keydown', (event) => {
-            switch (event.key) {
-                case "ArrowDown":
-                    this.origin.y -= 20 / this.scale;
-                    break;
-                case "ArrowUp":
-                    this.origin.y += 20 / this.scale;
-                    break;
-                case "ArrowLeft":
-                    this.origin.x += 20 / this.scale;
-                    break;
-                case "ArrowRight":
-                    this.origin.x -= 20 / this.scale;
-                    break;
-                default:
-                    return; // Quit when this doesn't handle the key event.
-              }
-        })
+        // 监听鼠标滚轮和方向键
+        if (wheel) {
+            document.addEventListener('wheel', event => {
+                if (event.deltaY < 0) {
+                    this.scale *= 1.1;
+                    this.origin.x -= this.mouse.x * 0.1 / this.scale;
+                    this.origin.y -= this.mouse.y * 0.1 / this.scale;
+                }
+                if (event.deltaY > 0) {
+                    this.scale *= 0.9;
+                    this.origin.x += this.mouse.x * 0.1 / this.scale;
+                    this.origin.y += this.mouse.y * 0.1 / this.scale;
+                }
+            })
+            document.addEventListener('keydown', (event) => {
+                switch (event.key) {
+                    case "ArrowDown":
+                        this.origin.y -= 30 / this.scale;
+                        break;
+                    case "ArrowUp":
+                        this.origin.y += 30 / this.scale;
+                        break;
+                    case "ArrowLeft":
+                        this.origin.x += 30 / this.scale;
+                        break;
+                    case "ArrowRight":
+                        this.origin.x -= 30 / this.scale;
+                        break;
+                    default:
+                        return; // Quit when this doesn't handle the key event.
+                }
+            })
+        }
+
     }
 
     /**
@@ -100,7 +109,7 @@ class Engine {
         this.entities = this.entities.filter(entity => !entity.dead);
         Object.keys(this.entitySet).map(key => {
             let toDel = this.entitySet[key].map((entity, index) => entity.dead ? index : false).filter(key => key !== false);
-            // 坑: 为了丢失引用, 只能在原对象上修改, 只能用splice, 该方法用在数组上是有问题的
+            // 坑: 为了不丢失引用, 只能在原对象上修改, 只能用splice
             toDel.length > 0 && toDel.sort((a, b) => b - a);
             toDel.map(index => this.entitySet[key].splice(index, 1));
         });
@@ -113,55 +122,52 @@ class Engine {
     run() {
         // 轮回 !!!
         const samsara = () => {
-            // 清空辅助线图层
-            // 辅助线降频
-            // if (this.ctHelperFrame >= this.samsaraCount) {
-            //     this.ctHelperAvailable = true
-            //     this.ctHelperFrame = 0;
-            // } else {
-            //     this.ctHelperAvailable = false;
-            //     this.ctHelperFrame += 1;
-            // };
-            // 运行物理定律
-            this.entities.map(entity => entity.ax = entity.ay = 0); // a=F/m, F是瞬时的
+            // 1. 运行物理定律
+            // 1.1 a=F/m, F是瞬时的, 如果物理定律中没有其他影响, a应该立即置0
+            this.entities.map(entity => entity.ax = entity.ay = 0);
+            // 1.2 执行所有注册了的物理定律/游戏规则
             this.laws.map(law => {
                 law();
             });
-            // 辅助线降频
-            this.ctHelperAvailable = false;
-            // 执行每个实体自己的动作
+            // 2. 执行每个实体自己的动作
             this.entities.map(entity => entity.action || entity.action());
-            // 执行运动
+            // 3. 执行运动
             this.entities.map(entity => {
                 if (!entity.__catched) {
                     entity.move(this.samsaraCount);
                 }
             });
+            // * 辅助线降频, 控制辅助线每帧只绘制一次, 以免影响性能
+            this.ctHelperAvailable = false;
         }
 
         // 帧
         const frame = () => {
+            // * 帧率监控
             let now = new Date().getTime();
             let frameCycle = now - this._frameTimestamp;
             this._frameTimestamp = now;
-            // 绘制当前实体
+            // 1. 绘制当前实体
             this.ct.save();
+            // 1.1.a 拖影效果
             this.ct.fillStyle = 'rgba(0, 0, 0, 0.1)';
             this.ct.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            // 1.1.b 无拖影效果
             // this.ct.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            // 1.2 使全局缩放和偏移生效
             this.ct.scale(this.scale, this.scale);
             this.ct.translate(this.origin.x, this.origin.y);
+            // 1.3 绘制add过的所有实体
             this.entities.map(entity => entity.draw(this.ct));
-            // 执行轮回
+            // 2. 执行轮回
             this.ctHelperAvailable = true; // 辅助线降频
             for (let i = 0; i < this.samsaraCount; i++) {
                 samsara();
             }
-            if (this.dynamicFreq) {
-                this.autoFreq(frameCycle);
-            }
+            // 3. 自动调频
+            this.autoFreq(frameCycle);
             this.ct.restore();
-            // console.log('useage: ', timeEnd - timeBegin);
+            // 4. 动画
             this.timmer = window.requestAnimationFrame(frame);
         }
         this.timmer = window.requestAnimationFrame(frame);
@@ -174,7 +180,6 @@ class Engine {
      * @method addLaw
      */
     addLaw(law) {
-        // this.laws.push([ent, law]);
         this.laws.push(law);
     }
 
@@ -187,10 +192,10 @@ class Engine {
      */
     ifCollide (objBounds0, objBounds1) {
         if (objBounds0.type === 'arc' && objBounds1.type === 'arc') { // 判断圆心距离
-            return Math.sqrt(
-                    Math.pow(objBounds0.x - objBounds1.x, 2) +
-                    Math.pow(objBounds0.y - objBounds1.y, 2)
-                   ) <= objBounds0.radius + objBounds1.radius;
+            return  Math.sqrt(
+                        Math.pow(objBounds0.x - objBounds1.x, 2) +
+                        Math.pow(objBounds0.y - objBounds1.y, 2)
+                    ) <= objBounds0.radius + objBounds1.radius;
         }
     }
 
@@ -211,15 +216,14 @@ class Engine {
                     // 画出碰撞辅助线
                     // 辅助线降频
                     if (this.ctHelperAvailable) {
-                        this.ctHelperFrame = 0;
-                        this.ctHelper.save();
-                        this.ctHelper.beginPath();
-                        this.ctHelper.moveTo(entity.x, entity.y);
-                        this.ctHelper.strokeStyle = 'green';
-                        this.ctHelper.lineWidth = 1;
-                        this.ctHelper.lineTo(nextEntity.x, nextEntity.y);
-                        this.ctHelper.stroke();
-                        this.ctHelper.restore();
+                        this.ct.save();
+                        this.ct.beginPath();
+                        this.ct.moveTo(entity.x, entity.y);
+                        this.ct.strokeStyle = 'green';
+                        this.ct.lineWidth = 1;
+                        this.ct.lineTo(nextEntity.x, nextEntity.y);
+                        this.ct.stroke();
+                        this.ct.restore();
                     }
                     // 回调
                     cbk(entity, nextEntity);
@@ -239,14 +243,14 @@ class Engine {
             // 重合了
             // 辅助线降频
             if (this.ctHelperAvailable) {
-                this.ctHelper.save();
-                this.ctHelper.beginPath();
-                this.ctHelper.moveTo(A.x, A.y);
-                this.ctHelper.strokeStyle = 'yellow';
-                this.ctHelper.lineWidth = 1;
-                this.ctHelper.lineTo(B.x, B.y);
-                this.ctHelper.stroke();
-                this.ctHelper.restore();
+                this.ct.save();
+                this.ct.beginPath();
+                this.ct.moveTo(A.x, A.y);
+                this.ct.strokeStyle = 'yellow';
+                this.ct.lineWidth = 1;
+                this.ct.lineTo(B.x, B.y);
+                this.ct.stroke();
+                this.ct.restore();
             }
 
             let central = {
@@ -287,7 +291,7 @@ class Engine {
         // ** 切面方向v不变
         // 切线方向矢量
         let Y = [1, -X[0]/X[1]]; // 随便设一个, 垂直就好
-        // ---- 这里有个大bug: 如果切线垂直(lenY = Infinity)呢
+        // ---- 这里有个坑: 切线可能垂直(lenY = Infinity)
         let lenY = Math.sqrt(Math.pow(Y[0], 2) + Math.pow(Y[1], 2)); // 切线向量长度
         if (lenY > 99999999) {
             lenY = 1;
@@ -305,10 +309,8 @@ class Engine {
         let mapxB = vBXN * Math.cos(oX) + vBY * Math.cos(oY);
         let mapyB = vBXN * Math.sin(oX) + vBY * Math.sin(oY); // 正负问题?
 
-        if (isNaN(mapxA)) {
-            A.fillStyle = 'red';
-            B.fillStyle = 'yellow';
-            console.log(mapxA, mapyA, mapxB, mapyB);
+        if (isNaN(mapxA+mapyA+mapxB+mapyB)) {
+            throw new Error('速度合成结果有问题');
         }
 
         A.vx = isNaN(mapxA) ? 0 : mapxA;
@@ -336,11 +338,10 @@ class Engine {
 
     /**
      * 将两物体的尺寸融合
-     * - 副作用: 直接修改A的尺寸和位置属性属性
+     * - 副作用: 直接修改A和B的尺寸和位置属性属性
      * @method sizeMerge
      * @param  {[type]}  A [description]
      * @param  {[type]}  B [description]
-     * @return {[type]}    [description]
      */
     sizeMerge(A, B) {
         let sizeA = A.getBounds();
@@ -356,10 +357,9 @@ class Engine {
     /**
      * 万有引力定律
      * @method uGrav
-     * @param  {[type]} A [description]
-     * @param  {[type]} B [description]
-     * @param  {[type]} G [description]
-     * @return {[type]}   [description]
+     * @param  {[type]} A 物体
+     * @param  {[type]} B 物体
+     * @param  {[type]} G 万有引力常数, 需要自行校准
      */
     uGrav(A, B, G) {
         let r = this.getDistance(A, B);
@@ -503,14 +503,14 @@ class Engine {
             entity.vy = (this.mouse.y - entity.y) * easing;
             // 辅助线降频
             if (this.ctHelperAvailable) {
-                this.ctHelper.save();
-                this.ctHelper.beginPath();
-                this.ctHelper.strokeStyle = 'red';
-                this.ctHelper.lineWidth = 1;
-                this.ctHelper.moveTo(entity.x, entity.y);
-                this.ctHelper.lineTo(this.mouse.x, this.mouse.y);
-                this.ctHelper.stroke();
-                this.ctHelper.restore();
+                this.ct.save();
+                this.ct.beginPath();
+                this.ct.strokeStyle = 'red';
+                this.ct.lineWidth = 1;
+                this.ct.moveTo(entity.x, entity.y);
+                this.ct.lineTo(this.mouse.x, this.mouse.y);
+                this.ct.stroke();
+                this.ct.restore();
             }
         }, false)
     }
@@ -529,22 +529,22 @@ class Engine {
                 // 绘制弹簧和瞄准线
                 // 辅助线降频
                 if (this.ctHelperAvailable) {
-                    this.ctHelper.save();
-                    this.ctHelper.beginPath();
-                    this.ctHelper.strokeStyle = '#0091EA';
-                    this.ctHelper.lineWidth = 2;
-                    this.ctHelper.moveTo(entity.x, entity.y);
-                    this.ctHelper.lineTo(this.mouse.x, this.mouse.y);
-                    this.ctHelper.stroke();
-                    this.ctHelper.beginPath();
-                    this.ctHelper.moveTo(entity.x, entity.y);
-                    this.ctHelper.setLineDash([4, 4]); // 线段长, 空隙长
-                    this.ctHelper.lineDashOffset = 0; // 起始位置偏移量
-                    this.ctHelper.strokeStyle = '#2979FF';
-                    this.ctHelper.lineWidth = 1;
-                    this.ctHelper.lineTo(entity.x - (this.mouse.x - entity.x)*3, entity.y - (this.mouse.y - entity.y)*3);
-                    this.ctHelper.stroke();
-                    this.ctHelper.restore();
+                    this.ct.save();
+                    this.ct.beginPath();
+                    this.ct.strokeStyle = '#0091EA';
+                    this.ct.lineWidth = 2;
+                    this.ct.moveTo(entity.x, entity.y);
+                    this.ct.lineTo(this.mouse.x, this.mouse.y);
+                    this.ct.stroke();
+                    this.ct.beginPath();
+                    this.ct.moveTo(entity.x, entity.y);
+                    this.ct.setLineDash([4, 4]); // 线段长, 空隙长
+                    this.ct.lineDashOffset = 0; // 起始位置偏移量
+                    this.ct.strokeStyle = '#2979FF';
+                    this.ct.lineWidth = 1;
+                    this.ct.lineTo(entity.x - (this.mouse.x - entity.x)*3, entity.y - (this.mouse.y - entity.y)*3);
+                    this.ct.stroke();
+                    this.ct.restore();
                 }
                 let len = this.getDistance(entity, this.mouse)
                 if (len > edge) {
@@ -587,45 +587,121 @@ class Engine {
      * @param  {Float} newFreq 新周期
      */
     autoFreq(frameCycle) {
-        // let endTime = new Date().getTime();
-        //
-        // if (this._autoFreqTimmer > 30) {
-        //     let oldSam = this.samsaraCount;
-        //     this._autoFreqTimmer = 0;
-        //     // if (this._bufferFunCycle.reduce((pre, cur) => pre + cur) / 30 < 8.5) {
-        //     //     this.samsaraCount += 10;
-        //     // }
-        //
-        //     let av = this._bufferFrameCycle.reduce((pre, cur) => pre + cur) / 30;
-        //     if (av < 18) {
-        //         this.samsaraCount += 5;
-        //     }
-        //     if (av > 18) {
-        //         this.samsaraCount *= 0.8;
-        //     }
-        //     // this.entities.map(entity => {
-        //     //     entity.vx *= oldSam / this.samsaraCount;
-        //     // })
-        //
-        //     console.log('每帧', oldSam, '个轮回');
-        //     console.log('用时', endTime - this._frameTimestamp, '毫秒');
-        //     console.log('帧周期', frameCycle, '毫秒');
-        //     console.log('调频: ', this.samsaraCount);
-        //     console.log('---------------------------');
-        // }
-        //
-        // this._bufferFunCycle[this._autoFreqTimmer] = endTime - this._frameTimestamp;
-        // this._bufferFrameCycle[this._autoFreqTimmer] = frameCycle;
-        // this._autoFreqTimmer += 1;
+        // 高精度模式
+        if (this.autoFreqMode === 'turbo') {
+            let endTime = new Date().getTime();
 
-        // what if 直接用当前最大速度最为频率
-        let vMax = this.entities.reduce((pre, cur) => {
-            let approximateV = Math.sqrt(Math.pow(cur.vx, 2) + Math.pow(cur.vy, 2));
-            if (approximateV > pre) {
-                return approximateV
-            } else {return pre}
-        }, 0.5)
-        this.samsaraCount =  Math.floor(vMax * 2);
-        // console.log('最大速度', vMax, '\n实时频率(每帧轮回数)',this.samsaraCount);
+            if (this._autoFreqTimmer > 30) {
+                let oldSam = this.samsaraCount;
+                this._autoFreqTimmer = 0;
+                // if (this._bufferFunCycle.reduce((pre, cur) => pre + cur) / 30 < 8.5) {
+                //     this.samsaraCount += 10;
+                // }
+
+                let av = this._bufferFrameCycle.reduce((pre, cur) => pre + cur) / 30;
+                if (av < 18) {
+                    this.samsaraCount += 5;
+                }
+                if (av > 18) {
+                    this.samsaraCount *= 0.8;
+                }
+                // this.entities.map(entity => {
+                //     entity.vx *= oldSam / this.samsaraCount;
+                // })
+
+                // console.log('每帧', oldSam, '个轮回');
+                // console.log('用时', endTime - this._frameTimestamp, '毫秒');
+                // console.log('帧周期', frameCycle, '毫秒');
+                // console.log('调频: ', this.samsaraCount);
+                // console.log('---------------------------');
+            }
+
+            this._bufferFunCycle[this._autoFreqTimmer] = endTime - this._frameTimestamp;
+            this._bufferFrameCycle[this._autoFreqTimmer] = frameCycle;
+            this._autoFreqTimmer += 1;
+        }
+
+        // 平衡模式
+        if (this.autoFreqMode === 'balance') {
+            let vMax = this.entities.reduce((pre, cur) => {
+                let approximateV = Math.sqrt(Math.pow(cur.vx, 2) + Math.pow(cur.vy, 2));
+                if (approximateV > pre) {
+                    return approximateV
+                } else {return pre}
+            }, 0.5)
+            this.samsaraCount =  Math.floor(vMax * 2);
+        }
+
+        // false 则什么也不做
     }
+}
+
+// ES6中没有静态属性(ES7中有, 但是chrome目前无法直接支持)
+/**
+ * 基类(虚基类)
+ * @author Simon
+ * @create 2016-08-09
+ */
+Engine.Base = class Base {
+    constructor(x, y) {
+        this.x  = x;
+        this.y  = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.ax = 0;
+        this.ay = 0;
+        this.f  = 0; // 摩擦力
+        this.spring = 0.5; // 弹性
+        // this.free   = true; // 按照自己的v/a自由运动
+        this.scale  = 1; // 缩放比例
+        this.rotate = 0; // 旋转角度
+        this.fillStyle   = 'rgba(0, 0, 0, 0)'; // 填充颜色
+        this.strokeStyle = 'rgba(0, 0, 0, 1)'; // 描边颜色
+        this.playYard  = PLAY_ZONE ; // 活动区域
+        this.m = 1; // 质量
+        this.dead = false; // 为true证明可以清理了
+    }
+
+    move(freq = 1) {
+        // 是否可以自由移动
+        // if (this.free) {
+            // let bounds = this.getBounds();
+            //
+            //
+            // if (this.x + this.vx >= this.playYard[2]) {
+            //     this.vx = -this.vx;
+            //     this.ax = -this.ax;
+            //     this.x = this.playYard[2]; // 立刻退回区域内, 暂时不按原路径退回
+            // }
+            // if (this.x + this.vx <= this.playYard[0]) {
+            //     this.vx = -this.vx;
+            //     this.ax = -this.ax;
+            //     this.x = this.playYard[0]; // 立刻退回区域内, 暂时不按原路径退回
+            // }
+            // if (this.y + this.vy >= this.playYard[3]) {
+            //     this.vy = -this.vy;
+            //     this.ay = -this.ay;
+            //     this.y = this.playYard[3]; // 立刻退回区域内, 暂时不按原路径退回
+            // }
+            // if (this.y + this.vy <= this.playYard[1]) {
+            //     this.vy = -this.vy;
+            //     this.ay = -this.ay;
+            //     this.y = this.playYard[1]; // 立刻退回区域内, 暂时不按原路径退回
+            // }
+            // 加速度
+            this.vx += this.ax / freq;
+            this.vy += this.ay / freq;
+            // 摩擦力
+            this.vx *= 1 - this.f / freq;
+            this.vy *= 1 - this.f / freq;
+            // 移动
+            this.x += this.vx / freq;
+            this.y += this.vy / freq;
+        // }
+    }
+
+    draw() {/**/}
+    getBounds() {/**/}
+    destory() {/**/}
+    action() {/**/}
 }

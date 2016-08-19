@@ -58,7 +58,7 @@ planets.unshift(subSun);
 // const stars = planets.concat(suns);
 
 // Hand of God !!!
-const hog = new Engine(canvas, null, 2, false);
+const hog = new Engine(canvas, 2, false, true);
 hog.scale = 0.3;
 hog.origin = {
     x: 1400,
